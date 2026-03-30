@@ -1,0 +1,620 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0">
+  <title>Income Tracker — CryptoHotep</title>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/react/18.2.0/umd/react.production.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/react-dom/18.2.0/umd/react-dom.production.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/babel-standalone/7.23.2/babel.min.js"></script>
+  <style>
+    *{box-sizing:border-box;margin:0;padding:0}
+    body{background:#fafafa;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;max-width:520px;margin:0 auto;min-height:100vh}
+    input,textarea,button,select{font-family:inherit}
+    ::-webkit-scrollbar{width:4px}
+    ::-webkit-scrollbar-thumb{background:#e5e7eb;border-radius:2px}
+  </style>
+</head>
+<body>
+<div id="root"></div>
+<script type="text/babel">
+const {useState, useEffect} = React;
+
+const C = {
+  red:"#FF3008", blue:"#1a3faa", gas:"#7c3aed", tax:"#b45309",
+  g50:"#fafafa", g100:"#f3f4f6", g200:"#e5e7eb", g400:"#9ca3af",
+  g600:"#4b5563", g800:"#1f2937", green:"#16a34a", amber:"#d97706"
+};
+
+const fmt      = n => `$${Number(n).toFixed(2)}`;
+const pct      = n => `${Number(n).toFixed(1)}%`;
+const today    = () => new Date().toISOString().split("T")[0];
+const mkKey    = d => d.slice(0,7);
+const mkShort  = k => { const [y,m]=k.split("-"); return new Date(y,m-1,1).toLocaleDateString("en-US",{month:"short",year:"2-digit"}); };
+const mkFull   = k => { const [y,m]=k.split("-"); return new Date(y,m-1,1).toLocaleDateString("en-US",{month:"long",year:"numeric"}); };
+const curMonth = () => today().slice(0,7);
+const fmtDate  = d => new Date(d+"T12:00:00").toLocaleDateString("en-US",{weekday:"short",month:"short",day:"numeric"});
+const fmtShort = d => new Date(d+"T12:00:00").toLocaleDateString("en-US",{month:"short",day:"numeric"});
+
+const gasAmt   = (g,r) => g*(r/100);
+const taxAmt   = (g,r) => g*(r/100);
+const ddNet    = (g,gr,tr) => g - gasAmt(g,gr) - taxAmt(g,tr);
+const prNet    = (g,tr)    => g - taxAmt(g,tr);
+
+const LS = { dd:"ch-dd-v1", pr:"ch-pr-v1", cfg:"ch-cfg-v1" };
+
+const loadLS = () => {
+  try {
+    return {
+      dd:  JSON.parse(localStorage.getItem(LS.dd))  || null,
+      pr:  JSON.parse(localStorage.getItem(LS.pr))  || null,
+      cfg: JSON.parse(localStorage.getItem(LS.cfg)) || null,
+    };
+  } catch { return {dd:null,pr:null,cfg:null}; }
+};
+const saveLS = (dd, pr, cfg) => {
+  try {
+    localStorage.setItem(LS.dd,  JSON.stringify(dd));
+    localStorage.setItem(LS.pr,  JSON.stringify(pr));
+    localStorage.setItem(LS.cfg, JSON.stringify(cfg));
+  } catch {}
+};
+
+const DEF_CFG = { gasRate:12, ddTaxRate:15, prTaxRate:15 };
+const SEED = [
+  {id:"dd-1",date:"2026-03-23",amount:19.80,deliveries:0,activeMin:0,dashMin:0,type:"dash",     notes:"Mon dash"},
+  {id:"dd-2",date:"2026-03-23",amount:10.00,deliveries:0,activeMin:0,dashMin:0,type:"challenge",notes:"Challenge bonus"},
+  {id:"dd-3",date:"2026-03-25",amount:23.54,deliveries:0,activeMin:0,dashMin:0,type:"dash",     notes:"Wed dash"},
+  {id:"dd-4",date:"2026-03-27",amount:52.85,deliveries:13,activeMin:196,dashMin:321,type:"dash",notes:"Fri — best night so far"},
+];
+
+const sortDates = arr => [...arr].sort((a,b)=>a.date.localeCompare(b.date));
+const groupByMonth = entries => {
+  const m={};
+  entries.forEach(e=>{const k=mkKey(e.date);if(!m[k])m[k]=[];m[k].push(e);});
+  return m;
+};
+
+const Card = ({children,style={}}) => (
+  <div style={{background:"#fff",border:`1px solid ${C.g200}`,borderRadius:12,padding:"14px 16px",
+    boxShadow:"0 1px 4px rgba(0,0,0,.05)",marginBottom:12,...style}}>
+    {children}
+  </div>
+);
+const SH = ({title,color}) => (
+  <div style={{fontSize:10,fontWeight:800,letterSpacing:2,textTransform:"uppercase",color,marginBottom:10}}>
+    {title}
+  </div>
+);
+const SB = ({label,value,color=C.g800,bg=C.g50}) => (
+  <div style={{background:bg,border:`1px solid ${C.g200}`,borderRadius:10,padding:"10px 6px",flex:"1 1 60px",textAlign:"center"}}>
+    <div style={{fontSize:14,fontWeight:900,color,lineHeight:1}}>{value}</div>
+    <div style={{fontSize:10,color:C.g400,marginTop:4,lineHeight:1.3}}>{label}</div>
+  </div>
+);
+const Pill = ({label,color,bg}) => (
+  <span style={{fontSize:10,fontWeight:700,color,background:bg,padding:"1px 8px",borderRadius:20,border:`1px solid ${color}30`}}>
+    {label}
+  </span>
+);
+const BR = ({label,value,color=C.g600,bold=false,top=false}) => (
+  <div style={{display:"flex",justifyContent:"space-between",padding:"7px 0",borderTop:top?`1px solid ${C.g200}`:"none"}}>
+    <span style={{fontSize:13,color:C.g600,fontWeight:bold?800:400}}>{label}</span>
+    <span style={{fontSize:bold?15:13,fontWeight:bold?900:700,color}}>{value}</span>
+  </div>
+);
+const Fld = ({label,type="text",value,onChange,placeholder,min,step,hint}) => (
+  <div style={{marginBottom:10}}>
+    <div style={{display:"flex",justifyContent:"space-between"}}>
+      <div style={{fontSize:11,fontWeight:700,color:C.g600,marginBottom:4,textTransform:"uppercase",letterSpacing:.5}}>{label}</div>
+      {hint&&<div style={{fontSize:10,color:C.g400}}>{hint}</div>}
+    </div>
+    <input type={type} value={value} onChange={e=>onChange(e.target.value)}
+      placeholder={placeholder} min={min} step={step}
+      style={{width:"100%",padding:"9px 12px",border:`1px solid ${C.g200}`,borderRadius:8,
+        fontSize:14,color:C.g800,background:"#fff",boxSizing:"border-box",outline:"none"}}/>
+  </div>
+);
+const TBox = ({label,value,onChange,placeholder,rows=2}) => (
+  <div style={{marginBottom:10}}>
+    <div style={{fontSize:11,fontWeight:700,color:C.g600,marginBottom:4,textTransform:"uppercase",letterSpacing:.5}}>{label}</div>
+    <textarea value={value} onChange={e=>onChange(e.target.value)} placeholder={placeholder} rows={rows}
+      style={{width:"100%",padding:"9px 12px",border:`1px solid ${C.g200}`,borderRadius:8,
+        fontSize:13,color:C.g800,background:"#fff",boxSizing:"border-box",outline:"none",resize:"vertical"}}/>
+  </div>
+);
+const Btn = ({children,onClick,color=C.red}) => (
+  <button onClick={onClick}
+    style={{padding:"10px 22px",background:color,color:"#fff",border:"none",borderRadius:8,
+      fontWeight:800,fontSize:13,cursor:"pointer",width:"100%",marginBottom:6}}>
+    {children}
+  </button>
+);
+const DelBtn = ({onClick}) => (
+  <button onClick={onClick} style={{background:"none",border:"none",color:C.g400,cursor:"pointer",fontSize:15,padding:"0 4px"}}>✕</button>
+);
+
+const BarChart = ({data, h=150}) => {
+  if (!data || data.length===0) return (
+    <div style={{height:h,display:"flex",alignItems:"center",justifyContent:"center",color:C.g400,fontSize:13}}>
+      No data yet
+    </div>
+  );
+  const maxVal = Math.max(...data.map(d=>d.value), 1);
+  const bw=30, gap=12, chartH=h-28, pad=8;
+  const totalW = Math.max(data.length*(bw+gap)+pad*2, 280);
+  return (
+    <div style={{overflowX:"auto"}}>
+      <svg width="100%" height={h} viewBox={`0 0 ${totalW} ${h}`} preserveAspectRatio="xMidYMid meet">
+        {[0.25,0.5,0.75,1].map(r => (
+          <line key={r} x1={pad} y1={chartH*(1-r)} x2={totalW-pad} y2={chartH*(1-r)}
+            stroke={C.g200} strokeWidth="0.5" strokeDasharray="3,3"/>
+        ))}
+        {data.map((d,i) => {
+          const bh = Math.max((d.value/maxVal)*chartH, d.value>0?4:0);
+          const x = pad + i*(bw+gap);
+          return (
+            <g key={i}>
+              <rect x={x} y={chartH-bh} width={bw} height={bh} fill={d.color||C.red} rx={4} opacity={0.88}/>
+              <rect x={x} y={chartH-bh} width={bw} height={Math.min(4,bh)} fill={d.color||C.red} rx={4}/>
+              {d.value>0 && (
+                <text x={x+bw/2} y={chartH-bh-5} textAnchor="middle" fontSize="9" fill={d.color||C.red} fontWeight="800">
+                  ${Math.round(d.value)}
+                </text>
+              )}
+              <text x={x+bw/2} y={h-4} textAnchor="middle" fontSize="8" fill={C.g400}>{d.label}</text>
+            </g>
+          );
+        })}
+      </svg>
+    </div>
+  );
+};
+
+const GroupedBarChart = ({data, h=160}) => {
+  if (!data || data.length===0) return (
+    <div style={{height:h,display:"flex",alignItems:"center",justifyContent:"center",color:C.g400,fontSize:13}}>
+      No data yet
+    </div>
+  );
+  const maxVal = Math.max(...data.flatMap(d=>[d.v1||0, d.v2||0]), 1);
+  const bw=13, bGap=3, grpGap=14, chartH=h-28, pad=8;
+  const grpW = bw*2+bGap;
+  const totalW = Math.max(data.length*(grpW+grpGap)+pad*2, 280);
+  return (
+    <div style={{overflowX:"auto"}}>
+      <svg width="100%" height={h} viewBox={`0 0 ${totalW} ${h}`} preserveAspectRatio="xMidYMid meet">
+        {[0.25,0.5,0.75,1].map(r=>(
+          <line key={r} x1={pad} y1={chartH*(1-r)} x2={totalW-pad} y2={chartH*(1-r)}
+            stroke={C.g200} strokeWidth="0.5" strokeDasharray="3,3"/>
+        ))}
+        {data.map((d,i)=>{
+          const x = pad + i*(grpW+grpGap);
+          const h1 = Math.max(((d.v1||0)/maxVal)*chartH, (d.v1||0)>0?4:0);
+          const h2 = Math.max(((d.v2||0)/maxVal)*chartH, (d.v2||0)>0?4:0);
+          return (
+            <g key={i}>
+              <rect x={x}         y={chartH-h1} width={bw} height={h1} fill={C.red}  rx={3} opacity={.85}/>
+              <rect x={x+bw+bGap} y={chartH-h2} width={bw} height={h2} fill={C.blue} rx={3} opacity={.85}/>
+              <text x={x+grpW/2} y={h-4} textAnchor="middle" fontSize="8" fill={C.g400}>{d.label}</text>
+            </g>
+          );
+        })}
+        <g transform={`translate(${totalW-90},6)`}>
+          <rect width={9} height={9} fill={C.red}  rx={2}/><text x={12} y={9} fontSize="9" fill={C.g600}>DoorDash</text>
+          <rect y={14} width={9} height={9} fill={C.blue} rx={2}/><text x={12} y={23} fontSize="9" fill={C.g600}>Prolific</text>
+        </g>
+      </svg>
+    </div>
+  );
+};
+
+const LineChart = ({data, h=140}) => {
+  if (!data || data.length < 2) return (
+    <div style={{height:h,display:"flex",alignItems:"center",justifyContent:"center",color:C.g400,fontSize:13}}>
+      Need at least 2 months of data
+    </div>
+  );
+  const maxVal = Math.max(...data.map(d=>d.value), 1);
+  const chartH=h-28, pad=20, totalW=280;
+  const stepX = (totalW-pad*2)/(data.length-1);
+  const pts = data.map((d,i)=>({x:pad+i*stepX, y:chartH-Math.max((d.value/maxVal)*chartH,2), ...d}));
+  const pathD = pts.map((p,i)=>`${i===0?"M":"L"}${p.x},${p.y}`).join(" ");
+  return (
+    <div style={{overflowX:"auto"}}>
+      <svg width="100%" height={h} viewBox={`0 0 ${totalW} ${h}`} preserveAspectRatio="xMidYMid meet">
+        {[0.25,0.5,0.75,1].map(r=>(
+          <line key={r} x1={pad} y1={chartH*(1-r)} x2={totalW-pad} y2={chartH*(1-r)}
+            stroke={C.g200} strokeWidth="0.5" strokeDasharray="3,3"/>
+        ))}
+        <path d={`${pathD} L${pts[pts.length-1].x},${chartH} L${pts[0].x},${chartH} Z`} fill={C.green} opacity={.08}/>
+        <path d={pathD} fill="none" stroke={C.green} strokeWidth="2.5" strokeLinejoin="round" strokeLinecap="round"/>
+        {pts.map((p,i)=>(
+          <g key={i}>
+            <circle cx={p.x} cy={p.y} r={4} fill="#fff" stroke={C.green} strokeWidth="2"/>
+            <text x={p.x} y={p.y-8} textAnchor="middle" fontSize="9" fill={C.green} fontWeight="800">${Math.round(p.value)}</text>
+            <text x={p.x} y={h-4} textAnchor="middle" fontSize="8" fill={C.g400}>{p.label}</text>
+          </g>
+        ))}
+      </svg>
+    </div>
+  );
+};
+
+const DDRow = ({e, gr, tr, onDelete}) => {
+  const gas=gasAmt(e.amount,gr), tax=taxAmt(e.amount,tr), net=e.amount-gas-tax;
+  return (
+    <div style={{padding:"8px 0 8px 10px",borderLeft:`3px solid ${C.red}`,marginBottom:6,background:`${C.red}04`,borderRadius:"0 6px 6px 0"}}>
+      <div style={{display:"flex",justifyContent:"space-between"}}>
+        <div style={{flex:1}}>
+          <div style={{display:"flex",alignItems:"center",gap:6,flexWrap:"wrap"}}>
+            <span style={{fontWeight:700,color:C.g800,fontSize:12}}>{fmtDate(e.date)}</span>
+            {e.type==="challenge"&&<Pill label="CHALLENGE" color={C.amber} bg="#fffbeb"/>}
+            {e.type==="bonus"    &&<Pill label="BONUS"     color={C.blue}  bg="#eff6ff"/>}
+          </div>
+          {e.notes&&<div style={{fontSize:11,color:C.g400,marginTop:2}}>{e.notes}</div>}
+          {e.deliveries>0&&<div style={{fontSize:11,color:C.g400}}>{e.deliveries} del · {e.activeMin}m active</div>}
+          <div style={{fontSize:11,color:C.tax,marginTop:2}}>⛽ {fmt(gas)} · 🧾 {fmt(tax)}</div>
+        </div>
+        <div style={{display:"flex",flexDirection:"column",alignItems:"flex-end",gap:2,marginLeft:8}}>
+          <span style={{fontWeight:700,color:C.red,  fontSize:13}}>{fmt(e.amount)}</span>
+          <span style={{fontWeight:900,color:C.green,fontSize:13}}>{fmt(net)} net</span>
+          <DelBtn onClick={onDelete}/>
+        </div>
+      </div>
+    </div>
+  );
+};
+
+const PRRow = ({e, tr, onDelete}) => {
+  const tax=taxAmt(e.amount,tr), net=e.amount-tax;
+  return (
+    <div style={{padding:"8px 0 8px 10px",borderLeft:`3px solid ${C.blue}`,marginBottom:6,background:`${C.blue}04`,borderRadius:"0 6px 6px 0"}}>
+      <div style={{display:"flex",justifyContent:"space-between"}}>
+        <div style={{flex:1}}>
+          <div style={{display:"flex",alignItems:"center",gap:6}}>
+            <span style={{fontWeight:700,color:C.g800,fontSize:12}}>{fmtDate(e.date)}</span>
+            <Pill label="PROLIFIC" color={C.blue} bg="#eff6ff"/>
+          </div>
+          {(e.study||e.notes)&&<div style={{fontSize:11,color:C.g400,marginTop:2}}>{e.study||e.notes}</div>}
+          <div style={{fontSize:11,color:C.tax,marginTop:2}}>🧾 {fmt(tax)} tax</div>
+        </div>
+        <div style={{display:"flex",flexDirection:"column",alignItems:"flex-end",gap:2,marginLeft:8}}>
+          <span style={{fontWeight:700,color:C.blue, fontSize:13}}>{fmt(e.amount)}</span>
+          <span style={{fontWeight:900,color:C.green,fontSize:13}}>{fmt(net)} net</span>
+          <DelBtn onClick={onDelete}/>
+        </div>
+      </div>
+    </div>
+  );
+};
+
+function App() {
+  const [ddEntries, setDDRaw] = useState(SEED);
+  const [prEntries, setPRRaw] = useState([]);
+  const [settings,  setCfgRaw]= useState(DEF_CFG);
+  const [tab,       setTab]   = useState("dashboard");
+  const [toast,     setToast] = useState(null);
+  const [ddDate,   setDdDate]   = useState(today());
+  const [ddAmt,    setDdAmt]    = useState("");
+  const [ddDel,    setDdDel]    = useState("");
+  const [ddActive, setDdActive] = useState("");
+  const [ddDash,   setDdDash]   = useState("");
+  const [ddNotes,  setDdNotes]  = useState("");
+  const [ddType,   setDdType]   = useState("dash");
+  const [prDate,  setPrDate]  = useState(today());
+  const [prAmt,   setPrAmt]   = useState("");
+  const [prStudy, setPrStudy] = useState("");
+  const [prNotes, setPrNotes] = useState("");
+  const [eGas,   setEGas]   = useState("12");
+  const [eDDTax, setEDDTax] = useState("15");
+  const [ePRTax, setEPRTax] = useState("15");
+  const [importTxt, setImportTxt] = useState("");
+
+  const ping = msg => { setToast(msg); setTimeout(()=>setToast(null), 3000); };
+
+  useEffect(() => {
+    const {dd, pr, cfg} = loadLS();
+    if (dd)  setDDRaw(dd);
+    if (pr)  setPRRaw(pr);
+    if (cfg) { setCfgRaw(cfg); setEGas(String(cfg.gasRate)); setEDDTax(String(cfg.ddTaxRate)); setEPRTax(String(cfg.prTaxRate)); }
+  }, []);
+
+  const setDD = (entries, prRef, cfgRef) => {
+    const s = sortDates(entries); setDDRaw(s); saveLS(s, prRef||prEntries, cfgRef||settings);
+  };
+  const setPR = (entries, ddRef, cfgRef) => {
+    const s = sortDates(entries); setPRRaw(s); saveLS(ddRef||ddEntries, s, cfgRef||settings);
+  };
+  const saveCfg = cfg => { setCfgRaw(cfg); saveLS(ddEntries, prEntries, cfg); };
+
+  const addDD = () => {
+    if (!ddAmt||!ddDate) return;
+    setDD([...ddEntries, {id:`dd-${Date.now()}`,date:ddDate,amount:parseFloat(ddAmt),deliveries:parseInt(ddDel)||0,activeMin:parseInt(ddActive)||0,dashMin:parseInt(ddDash)||0,type:ddType,notes:ddNotes}]);
+    setDdAmt(""); setDdDel(""); setDdActive(""); setDdDash(""); setDdNotes(""); setDdDate(today());
+    ping("✓ Saved");
+  };
+  const addPR = () => {
+    if (!prAmt||!prDate) return;
+    setPR([...prEntries, {id:`pr-${Date.now()}`,date:prDate,amount:parseFloat(prAmt),study:prStudy,notes:prNotes}]);
+    setPrAmt(""); setPrStudy(""); setPrNotes(""); setPrDate(today());
+    ping("✓ Saved");
+  };
+  const applyCfg = () => {
+    const cfg={gasRate:parseFloat(eGas)||12,ddTaxRate:parseFloat(eDDTax)||15,prTaxRate:parseFloat(ePRTax)||15};
+    saveCfg(cfg); ping("✓ Settings saved");
+  };
+  const doExport = () => {
+    const blob=JSON.stringify({dd:ddEntries,pr:prEntries,settings,exportedAt:new Date().toISOString()},null,2);
+    setImportTxt(blob);
+    try { navigator.clipboard.writeText(blob).then(()=>ping("✓ Copied to clipboard")); } catch { ping("Data ready — copy below"); }
+    setTab("backup");
+  };
+  const doImport = () => {
+    try {
+      const p=JSON.parse(importTxt); if (!p.dd) throw new Error();
+      setDD(p.dd); setPR(p.pr||[]);
+      if (p.settings) { saveCfg(p.settings); setEGas(String(p.settings.gasRate)); setEDDTax(String(p.settings.ddTaxRate)); setEPRTax(String(p.settings.prTaxRate)); }
+      ping("✓ Data restored"); setTab("dashboard");
+    } catch { ping("⚠️ Invalid backup"); }
+  };
+
+  const {gasRate,ddTaxRate,prTaxRate} = settings;
+  const cm=curMonth();
+  const ddThis=ddEntries.filter(e=>mkKey(e.date)===cm), prThis=prEntries.filter(e=>mkKey(e.date)===cm);
+  const ddMG=ddThis.reduce((s,e)=>s+e.amount,0);
+  const ddMGas=gasAmt(ddMG,gasRate), ddMTax=taxAmt(ddMG,ddTaxRate), ddMNet=ddMG-ddMGas-ddMTax;
+  const prMG=prThis.reduce((s,e)=>s+e.amount,0);
+  const prMTax=taxAmt(prMG,prTaxRate), prMNet=prMG-prMTax;
+  const combNet=ddMNet+prMNet, setAside=ddMGas+ddMTax+prMTax;
+  const ddAllG=ddEntries.reduce((s,e)=>s+e.amount,0), prAllG=prEntries.reduce((s,e)=>s+e.amount,0);
+  const ddAllNet=ddNet(ddAllG,gasRate,ddTaxRate), prAllNet=prNet(prAllG,prTaxRate);
+  const ddByM=groupByMonth(ddEntries), prByM=groupByMonth(prEntries);
+  const allMonths=[...new Set([...Object.keys(ddByM),...Object.keys(prByM)])].sort().reverse();
+  const last6=allMonths.slice(0,6).reverse();
+  const netLineData=last6.map(mk=>({label:mkShort(mk),value:ddNet((ddByM[mk]||[]).reduce((s,e)=>s+e.amount,0),gasRate,ddTaxRate)+prNet((prByM[mk]||[]).reduce((s,e)=>s+e.amount,0),prTaxRate)}));
+  const splitBarData=last6.map(mk=>({label:mkShort(mk),v1:ddNet((ddByM[mk]||[]).reduce((s,e)=>s+e.amount,0),gasRate,ddTaxRate),v2:prNet((prByM[mk]||[]).reduce((s,e)=>s+e.amount,0),prTaxRate)}));
+  const dailyBarData=ddThis.map(e=>({label:fmtShort(e.date),value:ddNet(e.amount,gasRate,ddTaxRate),color:e.type==="challenge"?C.amber:e.type==="bonus"?C.blue:C.red}));
+
+  const tabs=[{id:"dashboard",label:"Dashboard",icon:"📊"},{id:"log",label:"Log Entry",icon:"➕"},{id:"charts",label:"Charts",icon:"📈"},{id:"history",label:"History",icon:"📋"},{id:"backup",label:"Backup",icon:"💾"},{id:"settings",label:"Settings",icon:"⚙️"}];
+
+  return (
+    <div style={{background:C.g50,minHeight:"100vh",paddingBottom:40}}>
+      {toast&&<div style={{position:"fixed",top:16,left:"50%",transform:"translateX(-50%)",background:C.g800,color:"#fff",padding:"10px 22px",borderRadius:20,fontSize:13,fontWeight:700,zIndex:999,boxShadow:"0 4px 14px rgba(0,0,0,.18)",whiteSpace:"nowrap",maxWidth:"90vw"}}>{toast}</div>}
+      <div style={{background:"#fff",borderBottom:`3px solid ${C.red}`,padding:"16px 20px",boxShadow:"0 2px 8px rgba(0,0,0,.06)"}}>
+        <div style={{display:"flex",alignItems:"center",justifyContent:"space-between"}}>
+          <div>
+            <div style={{display:"flex",alignItems:"baseline",gap:1}}>
+              <span style={{fontSize:20,fontWeight:900,color:C.red,fontStyle:"italic"}}>Door</span>
+              <span style={{fontSize:20,fontWeight:900,color:C.g800,fontStyle:"italic"}}>Dash</span>
+              <span style={{fontSize:14,fontWeight:700,color:C.g400,margin:"0 5px"}}>+</span>
+              <span style={{fontSize:18,fontWeight:900,color:C.blue}}>Prolific</span>
+            </div>
+            <div style={{fontSize:11,color:C.g400,marginTop:2}}>Income Tracker · CryptoHotep · Detroit</div>
+          </div>
+          <div style={{textAlign:"right"}}>
+            <div style={{fontSize:10,color:C.g400,textTransform:"uppercase",letterSpacing:1}}>This Month Net</div>
+            <div style={{fontSize:24,fontWeight:900,color:C.green,lineHeight:1}}>{fmt(combNet)}</div>
+          </div>
+        </div>
+      </div>
+      <div style={{padding:"14px 16px"}}>
+        <div style={{display:"flex",gap:3,marginBottom:16,background:"#fff",borderRadius:12,padding:5,boxShadow:"0 1px 4px rgba(0,0,0,.06)",border:`1px solid ${C.g200}`}}>
+          {tabs.map(t=>(
+            <button key={t.id} onClick={()=>setTab(t.id)}
+              style={{flex:1,padding:"6px 1px",background:tab===t.id?C.red:"transparent",color:tab===t.id?"#fff":C.g400,border:"none",borderRadius:8,fontSize:"9px",fontWeight:700,cursor:"pointer",display:"flex",flexDirection:"column",alignItems:"center",gap:2}}>
+              <span style={{fontSize:12}}>{t.icon}</span><span>{t.label}</span>
+            </button>
+          ))}
+        </div>
+
+        {tab==="dashboard"&&<>
+          <Card>
+            <SH title={`${mkFull(cm)} — Summary`} color={C.g600}/>
+            <div style={{background:`${C.green}08`,border:`1px solid ${C.green}25`,borderRadius:10,padding:12,marginBottom:12,textAlign:"center"}}>
+              <div style={{fontSize:10,fontWeight:800,color:C.green,letterSpacing:2,marginBottom:4}}>COMBINED TAKE-HOME</div>
+              <div style={{fontSize:32,fontWeight:900,color:C.green,lineHeight:1}}>{fmt(combNet)}</div>
+              <div style={{fontSize:11,color:C.g400,marginTop:4}}>after gas &amp; tax withholding</div>
+            </div>
+            <div style={{background:`${C.red}06`,border:`1px solid ${C.red}20`,borderRadius:10,padding:12,marginBottom:8}}>
+              <div style={{fontSize:10,fontWeight:800,color:C.red,letterSpacing:1,marginBottom:6}}>🛵 DOORDASH</div>
+              <BR label="Gross" value={fmt(ddMG)} color={C.red}/>
+              <BR label={`⛽ Gas (${pct(gasRate)})`} value={`− ${fmt(ddMGas)}`} color={C.gas}/>
+              <BR label={`🧾 Tax (${pct(ddTaxRate)})`} value={`− ${fmt(ddMTax)}`} color={C.tax}/>
+              <BR label="Net take-home" value={fmt(ddMNet)} color={C.green} bold top/>
+            </div>
+            <div style={{background:`${C.blue}06`,border:`1px solid ${C.blue}20`,borderRadius:10,padding:12}}>
+              <div style={{fontSize:10,fontWeight:800,color:C.blue,letterSpacing:1,marginBottom:6}}>📋 PROLIFIC</div>
+              <BR label="Gross" value={fmt(prMG)} color={C.blue}/>
+              <BR label={`🧾 Tax (${pct(prTaxRate)})`} value={`− ${fmt(prMTax)}`} color={C.tax}/>
+              <BR label="Net take-home" value={fmt(prMNet)} color={C.green} bold top/>
+            </div>
+          </Card>
+          <Card>
+            <SH title="Monday Deposit — Move to SoFi" color={C.tax}/>
+            <BR label="⛽ Gas reserve" value={fmt(ddMGas)} color={C.gas}/>
+            <BR label="🧾 DD tax" value={fmt(ddMTax)} color={C.tax}/>
+            <BR label="🧾 Prolific tax" value={fmt(prMTax)} color={C.tax}/>
+            <BR label="Total to set aside" value={fmt(setAside)} color={C.g800} bold top/>
+            <div style={{background:"#fffbeb",border:"1px solid #fde68a",borderRadius:8,padding:"9px 12px",marginTop:10}}>
+              <div style={{fontSize:11,color:C.amber,fontWeight:700,marginBottom:3}}>💡 BUCKET RULE</div>
+              <div style={{fontSize:12,color:C.g600,lineHeight:1.65}}>Put ALL take-home (<strong>{fmt(combNet)}</strong>) into your <strong>highest-priority unfilled bucket</strong> this week. One bucket, full deposit. When it fills, next week moves to the next bucket down the stack.</div>
+            </div>
+          </Card>
+          <Card>
+            <SH title="DoorDash This Month" color={C.red}/>
+            {ddThis.length===0?<div style={{color:C.g400,fontSize:13}}>No entries yet.</div>:ddThis.map(e=><DDRow key={e.id} e={e} gr={gasRate} tr={ddTaxRate} onDelete={()=>setDD(ddEntries.filter(x=>x.id!==e.id))}/>)}
+          </Card>
+          <Card>
+            <SH title="Prolific This Month" color={C.blue}/>
+            {prThis.length===0?<div style={{color:C.g400,fontSize:13}}>No Prolific entries yet.</div>:prThis.map(e=><PRRow key={e.id} e={e} tr={prTaxRate} onDelete={()=>setPR(prEntries.filter(x=>x.id!==e.id))}/>)}
+          </Card>
+          <Card>
+            <SH title="All-Time" color={C.g600}/>
+            <div style={{display:"flex",gap:6}}>
+              <SB label="DD Net"    value={fmt(ddAllNet)}          color={C.red}   bg={`${C.red}08`}/>
+              <SB label="PR Net"    value={fmt(prAllNet)}          color={C.blue}  bg={`${C.blue}08`}/>
+              <SB label="Grand Net" value={fmt(ddAllNet+prAllNet)} color={C.green} bg="#f0fdf4"/>
+            </div>
+          </Card>
+        </>}
+
+        {tab==="log"&&<>
+          <Card>
+            <SH title="Log DoorDash Entry" color={C.red}/>
+            <Fld label="Date" type="date" value={ddDate} onChange={setDdDate}/>
+            <div style={{marginBottom:10}}>
+              <div style={{fontSize:11,fontWeight:700,color:C.g600,marginBottom:6,textTransform:"uppercase",letterSpacing:.5}}>Entry Type</div>
+              <div style={{display:"flex",gap:6}}>
+                {[["dash","🛵 Dash"],["challenge","⭐ Challenge"],["bonus","💰 Bonus"]].map(([v,l])=>(
+                  <button key={v} onClick={()=>setDdType(v)} style={{flex:1,padding:"7px 4px",borderRadius:8,fontWeight:700,fontSize:11,cursor:"pointer",background:ddType===v?C.red:"#fff",color:ddType===v?"#fff":C.g600,border:`1.5px solid ${ddType===v?C.red:C.g200}`}}>{l}</button>
+                ))}
+              </div>
+            </div>
+            <Fld label="Amount ($)" type="number" value={ddAmt} onChange={setDdAmt} min="0" step="0.01" placeholder="e.g. 52.85"/>
+            {parseFloat(ddAmt)>0&&(()=>{const g=parseFloat(ddAmt),gas=gasAmt(g,gasRate),tax=taxAmt(g,ddTaxRate),net=g-gas-tax;return(<div style={{background:`${C.green}08`,border:`1px solid ${C.green}25`,borderRadius:8,padding:"10px 12px",marginBottom:10}}><div style={{fontSize:10,fontWeight:800,color:C.green,marginBottom:6,letterSpacing:1}}>ENTRY PREVIEW</div><div style={{display:"flex",gap:6}}><SB label="⛽ Gas" value={fmt(gas)} color={C.gas} bg={`${C.gas}08`}/><SB label="🧾 Tax" value={fmt(tax)} color={C.tax} bg={`${C.tax}08`}/><SB label="Take-Home" value={fmt(net)} color={C.green} bg="#f0fdf4"/></div></div>);})()}
+            <Fld label="Deliveries" type="number" value={ddDel} onChange={setDdDel} min="0" placeholder="e.g. 13 (optional)"/>
+            <Fld label="Active Time (min)" type="number" value={ddActive} onChange={setDdActive} min="0" placeholder="(optional)"/>
+            <Fld label="Dash Time (min)" type="number" value={ddDash} onChange={setDdDash} min="0" placeholder="(optional)"/>
+            <TBox label="Notes" value={ddNotes} onChange={setDdNotes} placeholder="Zone, challenge, highlights…"/>
+            <Btn onClick={addDD} color={C.red}>Save DoorDash Entry</Btn>
+          </Card>
+          <Card>
+            <SH title="Log Prolific Entry" color={C.blue}/>
+            <Fld label="Date" type="date" value={prDate} onChange={setPrDate}/>
+            <Fld label="Amount ($)" type="number" value={prAmt} onChange={setPrAmt} min="0" step="0.01" placeholder="e.g. 1.13"/>
+            {parseFloat(prAmt)>0&&(()=>{const g=parseFloat(prAmt),tax=taxAmt(g,prTaxRate),net=g-tax;return(<div style={{background:`${C.green}08`,border:`1px solid ${C.green}25`,borderRadius:8,padding:"10px 12px",marginBottom:10}}><div style={{fontSize:10,fontWeight:800,color:C.green,marginBottom:6,letterSpacing:1}}>ENTRY PREVIEW</div><div style={{display:"flex",gap:6}}><SB label="🧾 Tax" value={fmt(tax)} color={C.tax} bg={`${C.tax}08`}/><SB label="Take-Home" value={fmt(net)} color={C.green} bg="#f0fdf4"/></div></div>);})()}
+            <Fld label="Study Name (optional)" value={prStudy} onChange={setPrStudy} placeholder="e.g. Judgments & preferences"/>
+            <TBox label="Notes" value={prNotes} onChange={setPrNotes} placeholder="Time taken, type of study…"/>
+            <Btn onClick={addPR} color={C.blue}>Save Prolific Entry</Btn>
+          </Card>
+        </>}
+
+        {tab==="charts"&&<>
+          <Card>
+            <SH title="Monthly Net Take-Home Trend" color={C.green}/>
+            <LineChart data={netLineData} h={150}/>
+            <div style={{fontSize:11,color:C.g400,textAlign:"center",marginTop:6}}>Combined net after gas + taxes</div>
+          </Card>
+          <Card>
+            <SH title="DoorDash vs Prolific Net by Month" color={C.g600}/>
+            <GroupedBarChart data={splitBarData} h={160}/>
+          </Card>
+          <Card>
+            <SH title="This Month — Daily DD Sessions (Net)" color={C.red}/>
+            {dailyBarData.length===0?<div style={{color:C.g400,fontSize:13,padding:"20px 0",textAlign:"center"}}>No DD entries this month yet.</div>:<BarChart data={dailyBarData} h={140}/>}
+            <div style={{display:"flex",justifyContent:"center",gap:14,marginTop:8,fontSize:11,color:C.g400,flexWrap:"wrap"}}>
+              {[[C.red,"Dash"],[C.amber,"Challenge"],[C.blue,"Bonus"]].map(([color,lbl])=>(<span key={lbl} style={{display:"flex",alignItems:"center",gap:4}}><span style={{width:10,height:10,background:color,borderRadius:2,display:"inline-block"}}></span>{lbl}</span>))}
+            </div>
+          </Card>
+          <Card>
+            <SH title="Month Stats" color={C.g600}/>
+            <div style={{display:"flex",gap:6,flexWrap:"wrap"}}>
+              <SB label="DD Gross"  value={fmt(ddMG)}    color={C.red}   bg={`${C.red}08`}/>
+              <SB label="DD Net"    value={fmt(ddMNet)}  color={C.green} bg="#f0fdf4"/>
+              <SB label="PR Net"    value={fmt(prMNet)}  color={C.blue}  bg={`${C.blue}08`}/>
+              <SB label="Set Aside" value={fmt(setAside)} color={C.tax}  bg={`${C.tax}08`}/>
+            </div>
+          </Card>
+        </>}
+
+        {tab==="history"&&<>
+          {allMonths.length===0?<Card><div style={{color:C.g400,fontSize:13}}>No history yet.</div></Card>:allMonths.map(mk=>{
+            const ddM=ddByM[mk]||[],prM=prByM[mk]||[];
+            const ddG=ddM.reduce((s,e)=>s+e.amount,0),prG=prM.reduce((s,e)=>s+e.amount,0);
+            const ddN=ddNet(ddG,gasRate,ddTaxRate),prN=prNet(prG,prTaxRate);
+            return(<Card key={mk}>
+              <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:12}}>
+                <div>
+                  <div style={{display:"flex",alignItems:"center",gap:8}}>
+                    <span style={{fontWeight:900,color:C.g800,fontSize:15}}>{mkFull(mk)}</span>
+                    {mk===cm&&<Pill label="CURRENT" color={C.green} bg="#f0fdf4"/>}
+                  </div>
+                  <div style={{fontSize:11,color:C.g400,marginTop:2}}>DD {fmt(ddG)} · PR {fmt(prG)} gross</div>
+                </div>
+                <div style={{textAlign:"right"}}>
+                  <div style={{fontSize:10,color:C.g400}}>Net</div>
+                  <div style={{fontSize:22,fontWeight:900,color:C.green}}>{fmt(ddN+prN)}</div>
+                </div>
+              </div>
+              {ddM.map(e=><DDRow key={e.id} e={e} gr={gasRate} tr={ddTaxRate} onDelete={()=>setDD(ddEntries.filter(x=>x.id!==e.id))}/>)}
+              {prM.map(e=><PRRow key={e.id} e={e} tr={prTaxRate} onDelete={()=>setPR(prEntries.filter(x=>x.id!==e.id))}/>)}
+              <div style={{display:"flex",gap:6,marginTop:10,paddingTop:10,borderTop:`1px solid ${C.g100}`}}>
+                <SB label="DD Net" value={fmt(ddN)}    color={C.red}   bg={`${C.red}08`}/>
+                <SB label="PR Net" value={fmt(prN)}    color={C.blue}  bg={`${C.blue}08`}/>
+                <SB label="Total"  value={fmt(ddN+prN)} color={C.green} bg="#f0fdf4"/>
+              </div>
+            </Card>);
+          })}
+        </>}
+
+        {tab==="backup"&&<>
+          <Card>
+            <SH title="About Data Storage" color={C.green}/>
+            <div style={{background:"#f0fdf4",border:"1px solid #bbf7d0",borderRadius:8,padding:"10px 12px",marginBottom:12}}>
+              <div style={{fontSize:12,color:C.g600,lineHeight:1.7}}>
+                <strong>When hosted on GitHub Pages:</strong> Data saves to localStorage tied to your URL. Survives browser closes, restarts, and HTML file updates.<br/><br/>
+                <strong>Use Export/Import when</strong> switching devices or as a manual backup.
+              </div>
+            </div>
+            <Btn onClick={doExport} color={C.green}>📋 Export &amp; Copy to Clipboard</Btn>
+          </Card>
+          <Card>
+            <SH title="Import — Restore Data" color={C.blue}/>
+            <TBox label="Paste backup JSON here" value={importTxt} onChange={setImportTxt} placeholder="Paste exported data here…" rows={5}/>
+            <Btn onClick={doImport} color={C.blue}>🔄 Restore Data</Btn>
+          </Card>
+          {importTxt&&(<Card>
+            <SH title="Export Data (select all and copy)" color={C.g600}/>
+            <textarea readOnly value={importTxt} rows={6} style={{width:"100%",padding:"10px 12px",border:`1px solid ${C.g200}`,borderRadius:8,fontSize:10,fontFamily:"monospace",color:C.g600,background:C.g50,boxSizing:"border-box",resize:"none",outline:"none"}}/>
+          </Card>)}
+          <Card>
+            <SH title="Data Summary" color={C.g600}/>
+            <BR label="DoorDash entries" value={ddEntries.length}/>
+            <BR label="Prolific entries"  value={prEntries.length}/>
+            <BR label="DD gross all-time" value={fmt(ddAllG)} color={C.red}/>
+            <BR label="PR gross all-time" value={fmt(prAllG)} color={C.blue}/>
+          </Card>
+        </>}
+
+        {tab==="settings"&&<>
+          <Card>
+            <SH title="Gas &amp; Tax Rates" color={C.tax}/>
+            <Fld label="Gas Reserve — DD (%)" type="number" value={eGas} onChange={setEGas} min="0" step="0.5" placeholder="12" hint="Your strategy"/>
+            <Fld label="Tax Withhold — DD (%)" type="number" value={eDDTax} onChange={setEDDTax} min="0" step="0.5" placeholder="15" hint="SE ~15.3%"/>
+            <Fld label="Tax Withhold — Prolific (%)" type="number" value={ePRTax} onChange={setEPRTax} min="0" step="0.5" placeholder="15" hint="SE ~15.3%"/>
+            <div style={{background:C.g100,borderRadius:8,padding:12,marginBottom:12}}>
+              <div style={{fontSize:10,fontWeight:800,color:C.g600,letterSpacing:1,marginBottom:8}}>PREVIEW — $100 EARNED</div>
+              {[["🛵 DoorDash $100",gasAmt(100,parseFloat(eGas)||12),taxAmt(100,parseFloat(eDDTax)||15),ddNet(100,parseFloat(eGas)||12,parseFloat(eDDTax)||15)],["📋 Prolific $100",0,taxAmt(100,parseFloat(ePRTax)||15),prNet(100,parseFloat(ePRTax)||15)]].map(([lbl,gas,tax,net])=>(
+                <div key={lbl} style={{marginBottom:8}}>
+                  <div style={{fontSize:11,fontWeight:700,color:C.g800,marginBottom:4}}>{lbl}</div>
+                  {gas>0&&<div style={{display:"flex",justifyContent:"space-between",fontSize:12,color:C.g600,padding:"2px 0"}}><span>⛽ Gas</span><span style={{color:C.gas,fontWeight:700}}>−{fmt(gas)}</span></div>}
+                  <div style={{display:"flex",justifyContent:"space-between",fontSize:12,color:C.g600,padding:"2px 0"}}><span>🧾 Tax</span><span style={{color:C.tax,fontWeight:700}}>−{fmt(tax)}</span></div>
+                  <div style={{display:"flex",justifyContent:"space-between",fontSize:12,padding:"2px 0",borderTop:`1px solid ${C.g200}`,marginTop:2}}><span style={{fontWeight:700}}>✅ Take-home</span><span style={{color:C.green,fontWeight:900}}>{fmt(net)}</span></div>
+                </div>
+              ))}
+            </div>
+            <Btn onClick={applyCfg} color={C.tax}>Save Settings</Btn>
+          </Card>
+          <Card>
+            <SH title="Active Rates" color={C.g600}/>
+            <div style={{display:"flex",gap:6}}>
+              <SB label="DD Gas"       value={pct(settings.gasRate)}   color={C.gas} bg={`${C.gas}08`}/>
+              <SB label="DD Tax"       value={pct(settings.ddTaxRate)} color={C.tax} bg={`${C.tax}08`}/>
+              <SB label="Prolific Tax" value={pct(settings.prTaxRate)} color={C.tax} bg={`${C.tax}08`}/>
+            </div>
+          </Card>
+        </>}
+
+        <div style={{marginTop:8,textAlign:"center",fontSize:10,color:C.g400,letterSpacing:1}}>
+          CRYPTOHOTEP · DETROIT · 2026 · DATA STORED LOCALLY
+        </div>
+      </div>
+    </div>
+  );
+}
+
+ReactDOM.createRoot(document.getElementById("root")).render(<App/>);
+</script>
+</body>
+</html>
